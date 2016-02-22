@@ -1,89 +1,88 @@
 import Base: size, convert
 
-import SoftConfidenceWeighted: init, fit!, predict, SCW1, SCW2
-import SVMLightLoader: SVMLightFile
+using SoftConfidenceWeighted: SCW, init, fit!, predict, SCW1, SCW2
+using SVMLightLoader: SVMLightFile
 
 
 function split_dataset(X, y, training_ratio=0.8)
     assert(0.0 <= training_ratio <= 1.0)
 
-    split_point = convert(Int64, size(X, 2)*training_ratio)
-    training = (X[:, 1:split_point-1], y[1:split_point-1])
-    test = (X[:, split_point:end], y[split_point:end])
-    return (training, test)
+    N = convert(Int64, size(X, 2)*training_ratio)
+    training = X[:, 1:N-1], y[1:N-1]
+    test = X[:, N:end], y[N:end]
+    return training, test
 end
 
 
-function calc_accuracy(results, answers)
-    n_correct_answers = 0
-    for (result, answer) in zip(results, answers)
-        if result == answer
-            n_correct_answers += 1
+function calc_accuracy(y_pred, y_true)
+    n_correct = 0
+    for (p, t) in zip(y_pred, y_true)
+        if p == t
+            n_correct += 1
         end
     end
 
-    return n_correct_answers / length(results)
+    return n_correct / length(y_pred)
 end
 
 
-function test_batch(X, y, type_; training_ratio=0.8, C=1.0, ETA=1.0)
-    model = init(C, ETA, type_)
+function test_batch(X, y, algorithm; training_ratio=0.8, C=1.0, ETA=1.0)
+    model = init(C, ETA)
 
-    (training, test) = split_dataset(X, y, training_ratio)
+    training, test = split_dataset(X, y, training_ratio)
 
-    (samples, labels) = training
-    model = fit!(model, samples, labels)
+    X, labels = training
+    model = fit!(model, X, labels)
 
-    (samples, answers) = test
-    results = predict(model, samples)
+    X, y_true = test
+    y_pred = predict(model, X)
 
-    accuracy = calc_accuracy(results, answers)
+    accuracy = calc_accuracy(y_pred, y_true)
     assert(accuracy == 1.0)
 
     println("BATCH")
-    println("\ttype: $type_")
+    println("\tModel: $algorithm")
     println("\taccuracy: $accuracy")
     println("")
 end
 
 
-function test_online(X, y, type_; training_ratio=0.8, C=1.0, ETA=1.0)
-    model = init(C, ETA, type_)
+function test_online(X, y, algorithm; training_ratio=0.8, C=1.0, ETA=1.0)
+    model = init(C, ETA)
 
-    (training, test) = split_dataset(X, y, training_ratio)
+    training, test = split_dataset(X, y, training_ratio)
 
-    (samples, labels) = training
-    for i in 1:size(samples, 2)
-        model = fit!(model, slice(samples, :, i), [labels[i]])
+    X, labels = training
+    for i in 1:size(X, 2)
+        model = fit!(model, slice(X, :, i), [labels[i]])
     end
 
-    (samples, answers) = test
+    X, y_true = test
 
-    results = Int64[]
-    for i in 1:size(samples, 2)
-        r = predict(model, slice(samples, :, i))
-        append!(results, r)
+    y_pred = Int64[]
+    for i in 1:size(X, 2)
+        x = slice(X, :, i)
+        label = predict(model, x)
+        append!(y_pred, label)
     end
 
-    accuracy = calc_accuracy(results, answers)
+    accuracy = calc_accuracy(y_pred, y_true)
     assert(accuracy == 1.0)
 
     println("ONLINE")
-    println("\ttype: $type_")
+    println("\talgorithm: $algorithm")
     println("\taccuracy: $accuracy")
     println("")
 end
 
 
-function test_svmlight(training_file, test_file, ndim, type_;
-                       training_ratio=0.8, C=1.0, ETA=1.0)
-    model = init(C, ETA, type_)
-    model = fit!(model, training_file, ndim)
+function test_svmlight(scw, training_file, test_file, ndim ;
+                       training_ratio=0.8)
+    scw = fit!(scw, training_file, ndim)
 
-    results = predict(model, test_file)
-    answers = [label for (_, label) in SVMLightFile(test_file)]
-
-    accuracy = calc_accuracy(results, answers)
+    y_pred = predict(scw, test_file)
+    y_true = [label for (_, label) in SVMLightFile(test_file)]
+    accuracy = calc_accuracy(y_pred, y_true)
     assert(accuracy == 1.0)
 end
 
@@ -94,11 +93,11 @@ y = readdlm("data/julia_array/digitsy.txt")
 println("TEST DIGITS\n")
 
 # Dense matrix
-test_batch(X, y, SCW1, training_ratio=0.8)
-test_batch(X, y, SCW2, training_ratio=0.8)
+test_batch(X, y, "SCW1")
+test_batch(X, y, "SCW2")
 
-test_online(X, y, SCW1, training_ratio=0.8)
-test_online(X, y, SCW2, training_ratio=0.8)
+test_online(X, y, "SCW1")
+test_online(X, y, "SCW2")
 
 X = sparse(X)
 y = sparse(y)
@@ -113,5 +112,5 @@ test_online(X, y, SCW2, training_ratio=0.8)
 training_file = "data/svmlight/digits.train.txt"
 test_file = "data/svmlight/digits.test.txt"
 ndim = 64
-test_svmlight(training_file, test_file, ndim, SCW1)
-test_svmlight(training_file, test_file, ndim, SCW2)
+test_svmlight(SCW{SCW1}(1.0, 1.0), training_file, test_file, ndim)
+test_svmlight(SCW{SCW2}(1.0, 1.0), training_file, test_file, ndim)
