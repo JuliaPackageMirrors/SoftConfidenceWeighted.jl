@@ -5,30 +5,30 @@ using Devectorize
 import Distributions: Normal, cdf
 import SVMLightLoader: SVMLightFile
 
-export init, fit!, predict, SCW1, SCW2
-
-
 typealias AA AbstractArray
+export init, fit!, predict, SCW, SCW1, SCW2
 
-@enum SCWType SCW1 SCW2
+abstract Model
+abstract SCW1 <: Model
+abstract SCW2 <: Model
 
 
 type CDF
-    phi
-    psi
-    zeta
+    ϕ
+    ψ
+    ζ
 
     function CDF(ETA)
-        phi = cdf(normal_distribution, ETA)
-        psi = 1 + phi^2 / 2
-        zeta = 1 + phi^2
-        new(phi, psi, zeta)
+        ϕ = cdf(Normal(0, 1), ETA)
+        ψ = 1 + ϕ^2 / 2
+        ζ = 1 + ϕ^2
+        new(ϕ, ψ, ζ)
     end
 end
 
 
 #calc cdf in a constructor
-type SCW
+type SCW{T<:Model}
     C::Float64
     cdf::CDF
     ndim::Int64
@@ -44,15 +44,13 @@ end
 
 function set_dimension!(scw::SCW, ndim::Int)
     assert(!scw.has_fitted)
+
     scw.ndim = ndim
     scw.weights = zeros(ndim)
     scw.covariance = ones(ndim)
     scw.has_fitted = true
     return scw
 end
-
-
-normal_distribution = Normal(0, 1)
 
 
 function calc_margin{T<:AA,R<:Real}(scw::SCW, x::T, label::R)
@@ -65,54 +63,50 @@ function calc_confidence{T<:AA}(scw::SCW, x::T)
     @devec t = dot(x, scw.covariance .* x)
 end
 
-
-function calc_alpha1{T<:AA,R<:Real}(scw::SCW, x::T, label::R)
+function calc_alpha{T<:AA,R<:Real}(scw::SCW{SCW1}, x::T, label::R)
     v = calc_confidence(scw, x)
     m = calc_margin(scw, x, label)
     cdf = scw.cdf
-    (phi, psi, zeta) = (cdf.phi, cdf.psi, cdf.zeta)
+    (ϕ, ψ, ζ) = (cdf.ϕ, cdf.ψ, cdf.ζ)
 
-    j = m^2 * phi^4 / 4
-    k = v * zeta * phi^2
-    t = (-m*psi + sqrt(j+k)) / (v*zeta)
+    j = m^2 * ϕ^4 / 4
+    k = v * ζ * ϕ^2
+    t = (-m*ψ + sqrt(j+k)) / (v*ζ)
     return min(scw.C, max(0, t))
 end
 
 
-function calc_alpha2{T<:AA,R<:Real}(scw::SCW, x::T, label::R)
+function calc_alpha{T<:AA,R<:Real}(scw::SCW{SCW2}, x::T, label::R)
     v = calc_confidence(scw, x)
     m = calc_margin(scw, x, label)
     cdf = scw.cdf
-    (phi, psi, zeta) = (cdf.phi, cdf.psi, cdf.zeta)
+    ϕ, ψ, ζ = cdf.ϕ, cdf.ψ, cdf.ζ
 
-    n = v+1 / scw.C
-    a = (phi*m*v)^2
-    b = 4*n*v * (n + v * phi^2)
-    gamma = phi * sqrt(a+b)
+    n = v + 1/2scw.C
+    a = (ϕ*m*v)^2
+    b = 4*n*v * (n + v*ϕ^2)
+    gamma = ϕ * sqrt(a+b)
 
-    c = -(2 * m * n + m * v * phi^2)
-    d = n^2 + n * v * phi^2
-    t = (c+gamma) / 2d
+    c = -(2*m*n + m*v*ϕ^2) + gamma
+    d = n^2 + n*v*ϕ^2
+    t = c / 2d
     return max(0, t)
 end
 
 
-function init(C, ETA, type_=SCW1::SCWType)
-    global calc_alpha
-    if type_ == SCW1
-        calc_alpha = calc_alpha1
-    elseif type_ == SCW2
-        calc_alpha = calc_alpha2
-    else
-        assert(true)
+function init(C, ETA; algorithm = "SCW1")
+    if algorithm == "SCW1"
+        return SCW{SCW1}(C, ETA)
+    elseif algorithm == "SCW2"
+        return SCW{SCW2}(C, ETA)
     end
 
-    return SCW(C, ETA)
+    throw(ArgumentError("Unexpected algorithm."))
 end
 
 
 function loss{T<:AA,R<:Real}(scw::SCW, x::T, label::R)
-    @devec t = label .* dot(scw.weights, x)
+    t = calc_margin(scw, x, label)
     if t >= 1
         return 0
     end
@@ -125,12 +119,12 @@ function calc_beta{T<:AA,R<:Real}(scw::SCW, x::T, label::R)
     v = calc_confidence(scw, x)
     m = calc_margin(scw, x, label)
     cdf = scw.cdf
-    (phi, psi, zeta) = (cdf.phi, cdf.psi, cdf.zeta)
+    (ϕ, ψ, ζ) = (cdf.ϕ, cdf.ψ, cdf.ζ)
 
-    j = -alpha * v * phi
-    k = sqrt((alpha*v*phi)^2 + 4v)
+    j = -alpha * v * ϕ
+    k = sqrt((alpha*v*ϕ)^2 + 4v)
     u = (j+k)^2 / 4
-    return (alpha * phi) / (sqrt(u) + v*alpha*phi)
+    return (alpha * ϕ) / (sqrt(u) + v*alpha*ϕ)
 end
 
 
@@ -158,6 +152,10 @@ end
 
 
 function update!{S<:AA,T<:AA,R<:Real}(t::S, scw::SCW, x::T, label::R)
+    if label != 1 && label != -1
+        throw(ArgumentError("Data label must be 1 or -1."))
+    end
+
     x = vec(full(x))
     if loss(scw, x, label) > 0
         update_weights!(t, scw, x, label)
@@ -171,17 +169,20 @@ function train!{T<:AA,R<:AA}(scw::SCW, X::T, labels::R)
     # preallocate for performance optimization
     t = Array(Float64, size(X, 1))
     for i in 1:size(X, 2)
-        label = labels[i]
-        assert(label == 1 || label == -1)
-        update!(t, scw, slice(X, :, i), label)
+        update!(t, scw, slice(X, :, i), labels[i])
     end
     return scw
 end
 
 
 function fit!{T<:AA,R<:AA}(scw::SCW, X::T, labels::R)
-    assert(ndims(X) <= 2)
-    assert(ndims(labels) <= 2)
+    if ndims(X) > 2
+        throw(ArgumentError("Estimator expects 2 dim array."))
+    end
+
+    if ndims(labels) > 2
+        throw(ArgumentError("Bad input size $(size(labels))"))
+    end
 
     if !scw.has_fitted
         ndim = size(X, 1)
@@ -199,8 +200,8 @@ function fit!(scw::SCW, filename::AbstractString, ndim::Int64)
     end
 
     t = Array(Float64, ndim)
-    for (vector, label) in SVMLightFile(filename, ndim)
-        update!(t, scw, vector, label)
+    for (x, label) in SVMLightFile(filename, ndim)
+        update!(t, scw, x, label)
     end
     return scw
 end
@@ -219,16 +220,25 @@ function compute{T<:AA}(scw::SCW, x::T)
 end
 
 
+function throw_error_if_not_fitted(scw)
+    if !scw.has_fitted
+        error("The model is not fitted yet")
+    end
+end
+
+
 function predict{T<:AA}(scw::SCW, X::T)
+    throw_error_if_not_fitted(scw)
     return [compute(scw, slice(X, :, i)) for i in 1:size(X, 2)]
 end
 
 
 function predict(scw::SCW, filename::AbstractString)
+    throw_error_if_not_fitted(scw)
+
     labels = Int64[]
     for (x, _) in SVMLightFile(filename, scw.ndim)
-        label = compute(scw, x)
-        push!(labels, label)
+        push!(labels, compute(scw, x))
     end
     return labels
 end
