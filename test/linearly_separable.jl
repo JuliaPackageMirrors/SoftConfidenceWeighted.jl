@@ -26,35 +26,32 @@ function calc_accuracy(y_pred, y_true)
 end
 
 
-function test_batch(X, y, algorithm; training_ratio=0.8, C=1.0, ETA=1.0)
-    model = init(C, ETA)
-
+function test_batch(scw, X, y; training_ratio=0.8)
+    println(size(X))
     training, test = split_dataset(X, y, training_ratio)
 
     X, labels = training
-    model = fit!(model, X, labels)
+    scw = fit!(scw, X, labels)
 
     X, y_true = test
-    y_pred = predict(model, X)
+    y_pred = predict(scw, X)
 
     accuracy = calc_accuracy(y_pred, y_true)
     assert(accuracy == 1.0)
 
     println("BATCH")
-    println("\tModel: $algorithm")
+    println("\tModel: $(typeof(scw))")
     println("\taccuracy: $accuracy")
     println("")
 end
 
 
-function test_online(X, y, algorithm; training_ratio=0.8, C=1.0, ETA=1.0)
-    model = init(C, ETA)
-
+function test_online(scw, X, y; training_ratio=0.8)
     training, test = split_dataset(X, y, training_ratio)
 
     X, labels = training
     for i in 1:size(X, 2)
-        model = fit!(model, slice(X, :, i), [labels[i]])
+        scw = fit!(scw, slice(X, :, i), [labels[i]])
     end
 
     X, y_true = test
@@ -62,7 +59,7 @@ function test_online(X, y, algorithm; training_ratio=0.8, C=1.0, ETA=1.0)
     y_pred = Int64[]
     for i in 1:size(X, 2)
         x = slice(X, :, i)
-        label = predict(model, x)
+        label = predict(scw, x)
         append!(y_pred, label)
     end
 
@@ -70,7 +67,7 @@ function test_online(X, y, algorithm; training_ratio=0.8, C=1.0, ETA=1.0)
     assert(accuracy == 1.0)
 
     println("ONLINE")
-    println("\talgorithm: $algorithm")
+    println("\tModel: $(typeof(scw))")
     println("\taccuracy: $accuracy")
     println("")
 end
@@ -93,21 +90,21 @@ y = readdlm("data/julia_array/digitsy.txt")
 println("TEST DIGITS\n")
 
 # Dense matrix
-test_batch(X, y, "SCW1")
-test_batch(X, y, "SCW2")
+test_batch(SCW{SCW1}(1.0, 1.0), X, y, training_ratio=0.8)
+test_batch(SCW{SCW2}(1.0, 1.0), X, y, training_ratio=0.8)
 
-test_online(X, y, "SCW1")
-test_online(X, y, "SCW2")
+test_online(SCW{SCW1}(1.0, 1.0), X, y, training_ratio=0.8)
+test_online(SCW{SCW2}(1.0, 1.0), X, y, training_ratio=0.8)
 
 X = sparse(X)
 y = sparse(y)
 
 # Sparse matrix
-test_batch(X, y, SCW1, training_ratio=0.8)
-test_batch(X, y, SCW2, training_ratio=0.8)
+test_batch(SCW{SCW1}(1.0, 1.0), X, y, training_ratio=0.8)
+test_batch(SCW{SCW2}(1.0, 1.0), X, y, training_ratio=0.8)
 
-test_online(X, y, SCW1, training_ratio=0.8)
-test_online(X, y, SCW2, training_ratio=0.8)
+test_online(SCW{SCW1}(1.0, 1.0), X, y, training_ratio=0.8)
+test_online(SCW{SCW2}(1.0, 1.0), X, y, training_ratio=0.8)
 
 training_file = "data/svmlight/digits.train.txt"
 test_file = "data/svmlight/digits.test.txt"
