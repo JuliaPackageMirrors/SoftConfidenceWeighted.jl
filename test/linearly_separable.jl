@@ -27,7 +27,6 @@ end
 
 
 function test_batch(scw, X, y; training_ratio=0.8)
-    println(size(X))
     training, test = split_dataset(X, y, training_ratio)
 
     X, labels = training
